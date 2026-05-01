@@ -8,19 +8,27 @@ use App\Services\JwtService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Validation\Rule;
 
 class AuthController extends Controller
 {
     public function register(Request $request, JwtService $jwt)
     {
+        if (! config('auth.public_register')) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Registrasi publik dinonaktifkan',
+            ], 403);
+        }
+
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255', 'unique:users,email'],
             'username' => ['required', 'string', 'max:255', 'unique:users,username'],
-            'password' => ['required', 'string', 'min:6'],
-            'role' => ['required', 'string', Rule::in(['admin', 'user', 'owner'])],
+            'password' => ['required', 'string', 'min:8'],
         ]);
+
+        $data['role'] = 'user';
+        $data['owner_id'] = null;
 
         $user = User::create($data);
 
@@ -43,12 +51,8 @@ class AuthController extends Controller
 
         $user = User::where('username', $data['username'])->first();
 
-        if (! $user) {
-            return response()->json(['status' => false, 'message' => 'Akun tidak terdaftar'], 404);
-        }
-
-        if (! Hash::check($data['password'], $user->password)) {
-            return response()->json(['status' => false, 'message' => 'Password yang Anda masukkan salah'], 401);
+        if (! $user || ! Hash::check($data['password'], $user->password)) {
+            return response()->json(['status' => false, 'message' => 'Username atau password salah'], 401);
         }
 
         $token = $jwt->createToken($user);

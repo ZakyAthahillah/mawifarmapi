@@ -2,6 +2,8 @@
 
 return [
 
+    'public_register' => env('AUTH_PUBLIC_REGISTER', env('APP_ENV') !== 'production'),
+
     /*
     |--------------------------------------------------------------------------
     | Authentication Defaults

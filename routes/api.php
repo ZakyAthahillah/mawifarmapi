@@ -10,10 +10,10 @@ use App\Http\Controllers\Api\ProduksiController;
 use App\Http\Controllers\Api\UserController;
 use Illuminate\Support\Facades\Route;
 
-Route::post('/register', [AuthController::class, 'register']);
-Route::post('/login', [AuthController::class, 'login']);
+Route::post('/register', [AuthController::class, 'register'])->middleware('throttle:3,1');
+Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:5,1');
 
-Route::middleware('jwt')->group(function () {
+Route::middleware(['jwt', 'throttle:120,1'])->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/me', [AuthController::class, 'me']);
 
@@ -78,7 +78,7 @@ Route::middleware('jwt')->group(function () {
     Route::get('/fcr/periode', [FcrController::class, 'periode']);
 });
 
-Route::middleware(['jwt', 'role:developer'])->prefix('users')->group(function () {
+Route::middleware(['jwt', 'throttle:120,1', 'role:developer'])->prefix('users')->group(function () {
     Route::get('/', [UserController::class, 'index']);
     Route::post('/', [UserController::class, 'store']);
     Route::put('/{user}', [UserController::class, 'update']);

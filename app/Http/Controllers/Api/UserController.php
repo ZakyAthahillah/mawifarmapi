@@ -45,6 +45,17 @@ class UserController extends Controller
         $ownerIds = $data['owner_ids'] ?? [];
         unset($data['owner_ids']);
 
+        if (
+            (string) $user->role === 'developer'
+            && (string) ($data['role'] ?? '') !== 'developer'
+            && $this->isLastDeveloper($user)
+        ) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Tidak bisa mengubah role developer terakhir',
+            ], 422);
+        }
+
         if (empty($data['password'])) {
             unset($data['password']);
         }
@@ -65,6 +76,13 @@ class UserController extends Controller
             return response()->json([
                 'status' => false,
                 'message' => 'Tidak bisa menghapus akun sendiri',
+            ], 422);
+        }
+
+        if ($this->isLastDeveloper($user)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Tidak bisa menghapus developer terakhir',
             ], 422);
         }
 
@@ -92,7 +110,7 @@ class UserController extends Controller
                 'max:255',
                 Rule::unique('users', 'username')->ignore($ignoreId),
             ],
-            'password' => [$ignoreId ? 'nullable' : 'required', 'string', 'min:6'],
+            'password' => [$ignoreId ? 'nullable' : 'required', 'string', 'min:8'],
             'role' => ['required', 'string', Rule::in(self::ROLES)],
             'owner_id' => [
                 'nullable',
@@ -139,5 +157,11 @@ class UserController extends Controller
             'owner_name' => $user->owner_id ? User::query()->whereKey($user->owner_id)->value('name') : null,
             'created_at' => optional($user->created_at)?->format('Y-m-d H:i'),
         ];
+    }
+
+    private function isLastDeveloper(User $user): bool
+    {
+        return (string) $user->role === 'developer'
+            && User::query()->where('role', 'developer')->whereKeyNot($user->id)->doesntExist();
     }
 }

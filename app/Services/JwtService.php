@@ -39,6 +39,16 @@ class JwtService
         }
 
         [$header, $payload, $signature] = $parts;
+        $decodedHeader = json_decode($this->base64UrlDecode($header), true);
+
+        if (
+            ! is_array($decodedHeader)
+            || strtoupper((string) ($decodedHeader['typ'] ?? '')) !== 'JWT'
+            || (string) ($decodedHeader['alg'] ?? '') !== 'HS256'
+        ) {
+            throw new InvalidArgumentException('Header token tidak valid');
+        }
+
         $expected = $this->base64UrlEncode(hash_hmac('sha256', "$header.$payload", $this->secret(), true));
 
         if (! hash_equals($expected, $signature)) {
@@ -85,6 +95,19 @@ class JwtService
 
     private function base64UrlDecode(string $value): string
     {
-        return base64_decode(strtr($value, '-_', '+/'));
+        $base64 = strtr($value, '-_', '+/');
+        $padding = strlen($base64) % 4;
+
+        if ($padding > 0) {
+            $base64 .= str_repeat('=', 4 - $padding);
+        }
+
+        $decoded = base64_decode($base64, true);
+
+        if ($decoded === false) {
+            throw new InvalidArgumentException('Token tidak valid');
+        }
+
+        return $decoded;
     }
 }
