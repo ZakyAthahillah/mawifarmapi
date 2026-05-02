@@ -30,7 +30,7 @@ class QrPrintBatchController extends Controller
     public function store(Request $request)
     {
         $data = $this->validatedData($request);
-        $data['tanggal'] = now()->toDateString();
+        $data['tanggal'] = $data['tanggal'] ?? now()->toDateString();
         $data['nomor_batch'] = $this->nextBatchNumber((int) $data['id_kandang'], $data['tanggal']);
 
         $batch = QrPrintBatch::create($data + [
@@ -54,7 +54,7 @@ class QrPrintBatchController extends Controller
         }
 
         $data = $this->validatedData($request);
-        $data['tanggal'] = $batch->tanggal?->format('Y-m-d') ?? now()->toDateString();
+        $data['tanggal'] = $data['tanggal'] ?? $batch->tanggal?->format('Y-m-d') ?? now()->toDateString();
         $data['user_id'] = $this->ownerIdForBatchKandang($data['id_kandang']);
         $before = $batch->toArray();
         $batch->update($data);
@@ -85,6 +85,7 @@ class QrPrintBatchController extends Controller
     {
         $rules = [
             'id_kandang' => ['required', 'integer', Rule::in($this->accessibleKandangIdsForBatch())],
+            'tanggal' => ['nullable', 'date'],
         ];
 
         foreach (QrPrintBatch::weightColumns() as $column) {
