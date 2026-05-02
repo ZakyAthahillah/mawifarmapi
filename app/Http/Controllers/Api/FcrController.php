@@ -18,6 +18,10 @@ class FcrController extends Controller
         $request->validate([
             'id_kandang' => ['required_without:id_periode', 'integer'],
             'id_periode' => ['nullable', 'integer'],
+            'mode' => ['nullable', 'string', 'in:day,range,period,month,year'],
+            'tanggal' => ['nullable', 'date'],
+            'tanggal_mulai' => ['nullable', 'date'],
+            'tanggal_selesai' => ['nullable', 'date'],
             'bulan' => ['nullable', 'integer', 'between:1,12'],
             'tahun' => ['nullable', 'integer', 'min:2000', 'max:2100'],
         ]);
@@ -30,6 +34,7 @@ class FcrController extends Controller
         }
 
         $kandang = Kandang::query()
+            ->with('user:id,name')
             ->whereIn('id_kandang', $this->accessibleKandangIds())
             ->find($periode?->id_kandang ?? $request->query('id_kandang'));
         if (! $kandang) {
@@ -46,27 +51,34 @@ class FcrController extends Controller
             return response()->json(['status' => false, 'message' => 'Periode kandang tidak ditemukan']);
         }
 
-        $month = (int) $request->query('bulan', now()->month);
-        $year = (int) $request->query('tahun', now()->year);
-        $monthStart = Carbon::create($year, $month, 1)->startOfDay();
-        $monthEnd = Carbon::create($year, $month, 1)->endOfMonth()->endOfDay();
-
         $kandangStart = $periode->tanggal_mulai?->copy()->startOfDay();
         $kandangEnd = $periode->tanggal_selesai?->copy()->endOfDay() ?: now()->endOfDay();
+        $mode = (string) $request->query('mode', 'month');
+        $month = (int) $request->query('bulan', now()->month);
+        $year = (int) $request->query('tahun', now()->year);
+        [$requestedStart, $requestedEnd, $periodLabel] = $this->resolveRange($request, $mode, $month, $year, $kandangStart, $kandangEnd);
 
-        $rangeStart = $kandangStart && $kandangStart->greaterThan($monthStart) ? $kandangStart : $monthStart;
-        $rangeEnd = $kandangEnd && $kandangEnd->lessThan($monthEnd) ? $kandangEnd : $monthEnd;
+        $rangeStart = $kandangStart && $kandangStart->greaterThan($requestedStart) ? $kandangStart : $requestedStart;
+        $rangeEnd = $kandangEnd && $kandangEnd->lessThan($requestedEnd) ? $kandangEnd : $requestedEnd;
 
         if ($rangeStart->greaterThan($rangeEnd)) {
             return response()->json([
                 'status' => false,
-                'message' => 'Tidak ada data pada bulan yang dipilih',
+                'message' => 'Tidak ada data pada range KPI yang dipilih',
+                'id_kandang' => $kandang->id_kandang,
+                'id_periode' => $periode->id_periode,
+                'nama_kandang' => $kandang->nama_kandang,
+                'primary_owner_id' => $kandang->user_id,
+                'primary_owner_name' => $kandang->user?->name,
+                'nama_periode' => $periode->nama_periode,
                 'periode' => [
                     'mulai' => $rangeStart->toDateString(),
                     'sampai' => $rangeEnd->toDateString(),
                     'hari' => 0,
                     'bulan' => $month,
                     'tahun' => $year,
+                    'mode' => $mode,
+                    'label' => $periodLabel,
                 ],
                 'asumsi' => [
                     'butir_per_kolom' => 180,
@@ -176,6 +188,8 @@ class FcrController extends Controller
             'id_kandang' => $kandang->id_kandang,
             'id_periode' => $periode->id_periode,
             'nama_kandang' => $kandang->nama_kandang,
+            'primary_owner_id' => $kandang->user_id,
+            'primary_owner_name' => $kandang->user?->name,
             'nama_periode' => $periode->nama_periode,
             'periode' => [
                 'mulai' => $rangeStart->toDateString(),
@@ -183,6 +197,8 @@ class FcrController extends Controller
                 'hari' => $periodDays,
                 'bulan' => $month,
                 'tahun' => $year,
+                'mode' => $mode,
+                'label' => $periodLabel,
             ],
             'asumsi' => [
                 'butir_per_kolom' => $eggsPerColumn,
@@ -231,5 +247,53 @@ class FcrController extends Controller
                 ],
             ],
         ]);
+    }
+
+    private function resolveRange(Request $request, string $mode, int $month, int $year, ?Carbon $kandangStart, Carbon $kandangEnd): array
+    {
+        return match ($mode) {
+            'day' => $this->dayRange($request),
+            'range' => $this->customRange($request),
+            'period' => [
+                ($kandangStart ?: now())->copy()->startOfDay(),
+                $kandangEnd->copy()->endOfDay(),
+                'Periode',
+            ],
+            'year' => [
+                Carbon::create($year, 1, 1)->startOfDay(),
+                Carbon::create($year, 12, 31)->endOfDay(),
+                "Tahun {$year}",
+            ],
+            default => [
+                Carbon::create($year, $month, 1)->startOfDay(),
+                Carbon::create($year, $month, 1)->endOfMonth()->endOfDay(),
+                'Bulanan',
+            ],
+        };
+    }
+
+    private function dayRange(Request $request): array
+    {
+        $date = $request->filled('tanggal')
+            ? Carbon::parse($request->query('tanggal'))
+            : now();
+
+        return [$date->copy()->startOfDay(), $date->copy()->endOfDay(), 'Harian'];
+    }
+
+    private function customRange(Request $request): array
+    {
+        $start = $request->filled('tanggal_mulai')
+            ? Carbon::parse($request->query('tanggal_mulai'))->startOfDay()
+            : now()->startOfDay();
+        $end = $request->filled('tanggal_selesai')
+            ? Carbon::parse($request->query('tanggal_selesai'))->endOfDay()
+            : $start->copy()->endOfDay();
+
+        if ($end->lessThan($start)) {
+            $end = $start->copy()->endOfDay();
+        }
+
+        return [$start, $end, 'Rentang tanggal'];
     }
 }
