@@ -45,7 +45,7 @@ class Kandang extends Model
     public function sharedOwners(): BelongsToMany
     {
         return $this->belongsToMany(User::class, 'kandang_owner_access', 'id_kandang', 'owner_id')
-            ->where('role', 'owner')
+            ->whereIn('role', ['owner', 'developer'])
             ->orderBy('name');
     }
 }

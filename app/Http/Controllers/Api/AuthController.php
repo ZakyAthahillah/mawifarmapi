@@ -100,7 +100,10 @@ class AuthController extends Controller
             ], 422);
         }
 
-        $user->update(['password' => $data['password']]);
+        $user->update([
+            'password' => $data['password'],
+            'must_change_password' => false,
+        ]);
         ActivityLogger::log('change_password', 'auth', $user, null, ['username' => $user->username], $request);
 
         return response()->json([
@@ -118,6 +121,7 @@ class AuthController extends Controller
             'username' => $user->username,
             'role' => $user->role,
             'owner_id' => $user->owner_id,
+            'must_change_password' => (bool) $user->must_change_password,
             'owner_options' => in_array($user->role, ['admin', 'farm_worker'], true)
                 ? $user->ownerAccess()->get(['users.id', 'users.name'])->map(fn (User $owner) => [
                     'id' => $owner->id,

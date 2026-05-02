@@ -44,6 +44,11 @@ class Produksi extends Model
         'berat23',
         'berat24',
         'berat25',
+        'berat26',
+        'berat27',
+        'berat28',
+        'berat29',
+        'berat30',
     ];
 
     public const BERAT_COLUMNS = [
@@ -52,6 +57,7 @@ class Produksi extends Model
         'berat11', 'berat12', 'berat13', 'berat14', 'berat15',
         'berat16', 'berat17', 'berat18', 'berat19', 'berat20',
         'berat21', 'berat22', 'berat23', 'berat24', 'berat25',
+        'berat26', 'berat27', 'berat28', 'berat29', 'berat30',
     ];
 
     protected $casts = [

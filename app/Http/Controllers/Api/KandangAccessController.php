@@ -32,7 +32,10 @@ class KandangAccessController extends Controller
             'data' => [
                 'kandang' => $kandang,
                 'owners' => User::query()
-                    ->where('role', 'owner')
+                    ->where(fn ($query) => $query
+                        ->where('role', 'owner')
+                        ->orWhere('id', $this->currentUserId())
+                    )
                     ->orderBy('name')
                     ->get(['id', 'name'])
                     ->values(),
@@ -47,7 +50,10 @@ class KandangAccessController extends Controller
             'owner_ids.*' => [
                 'integer',
                 'distinct',
-                Rule::exists('users', 'id')->where(fn ($query) => $query->where('role', 'owner')),
+                Rule::exists('users', 'id')->where(fn ($query) => $query
+                    ->where('role', 'owner')
+                    ->orWhere('id', $this->currentUserId())
+                ),
             ],
         ]);
 

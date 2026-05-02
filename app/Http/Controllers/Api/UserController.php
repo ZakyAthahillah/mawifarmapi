@@ -10,7 +10,7 @@ use Illuminate\Validation\Rule;
 
 class UserController extends Controller
 {
-    private const ROLES = ['developer', 'admin', 'user', 'owner', 'farm_worker'];
+    private const ROLES = ['developer', 'admin', 'user', 'owner', 'distribution', 'farm_worker'];
 
     public function index()
     {
@@ -118,6 +118,7 @@ class UserController extends Controller
             ],
             'password' => [$ignoreId ? 'nullable' : 'required', 'string', 'min:8'],
             'role' => ['required', 'string', Rule::in(self::ROLES)],
+            'must_change_password' => ['nullable', 'boolean'],
             'owner_id' => [
                 'nullable',
                 'integer',
@@ -146,6 +147,8 @@ class UserController extends Controller
             $data['owner_ids'] = $ownerIds;
         }
 
+        $data['must_change_password'] = (bool) ($data['must_change_password'] ?? false);
+
         return $data;
     }
 
@@ -158,6 +161,7 @@ class UserController extends Controller
             'username' => $user->username,
             'role' => $user->role,
             'owner_id' => $user->owner_id,
+            'must_change_password' => (bool) $user->must_change_password,
             'owner_ids' => in_array($user->role, ['admin', 'farm_worker'], true) ? $user->ownerAccess()->pluck('users.id')->map(fn ($id) => (int) $id)->values() : [],
             'owner_names' => in_array($user->role, ['admin', 'farm_worker'], true) ? $user->ownerAccess()->pluck('users.name')->values() : [],
             'owner_name' => $user->owner_id ? User::query()->whereKey($user->owner_id)->value('name') : null,
@@ -180,6 +184,7 @@ class UserController extends Controller
             'username' => $user->username,
             'role' => $user->role,
             'owner_id' => $user->owner_id,
+            'must_change_password' => (bool) $user->must_change_password,
         ];
     }
 }

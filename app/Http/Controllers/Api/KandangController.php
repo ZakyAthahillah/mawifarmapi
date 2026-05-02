@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Kandang;
+use App\Models\KandangMortalityLog;
 use App\Models\KandangPeriode;
 use App\Services\ActivityLogger;
 use Illuminate\Http\Request;
@@ -238,23 +239,165 @@ class KandangController extends Controller
 
     public function addMortality(Request $request, Kandang $kandang)
     {
-        $data = $request->validate(['jumlah_kematian' => ['required', 'integer', 'min:1']]);
+        $data = $request->validate([
+            'jumlah_kematian' => ['required', 'integer', 'min:1'],
+            'tanggal' => ['nullable', 'date'],
+        ]);
 
         if (! $this->canAccessKandang($kandang->id_kandang)) {
             return response()->json(['status' => false, 'message' => 'Data bukan milik user ini'], 403);
         }
 
-        $before = $kandang->toArray();
-        $kandang->increment('total_kematian', $data['jumlah_kematian']);
-
         $periode = $this->editablePeriod($kandang);
+        $before = [
+            'kandang' => $kandang->toArray(),
+            'periode' => $periode?->toArray(),
+        ];
 
-        if ($periode) {
-            $periode->increment('total_kematian', $data['jumlah_kematian']);
-        }
-        ActivityLogger::log('update', 'kandang', $kandang, $before, $kandang->fresh()->toArray(), $request);
+        $log = DB::transaction(function () use ($kandang, $periode, $data) {
+            $jumlah = (int) $data['jumlah_kematian'];
+            $kandang->increment('total_kematian', $jumlah);
+
+            if ($periode) {
+                $periode->increment('total_kematian', $jumlah);
+            }
+
+            return KandangMortalityLog::create([
+                'user_id' => $this->dataOwnerIdForKandang($kandang->id_kandang),
+                'created_by' => $this->creatorId(),
+                'id_kandang' => $kandang->id_kandang,
+                'id_periode' => $periode?->id_periode,
+                'tanggal' => $data['tanggal'] ?? now()->toDateString(),
+                'jumlah_kematian' => $jumlah,
+            ]);
+        });
+        ActivityLogger::log('create', 'kandang_mortality', $log, $before, [
+            'log' => $log->toArray(),
+            'kandang' => $kandang->fresh()->toArray(),
+            'periode' => $periode?->fresh()?->toArray(),
+        ], $request);
 
         return response()->json(['status' => true, 'message' => 'Success']);
+    }
+
+    public function mortalityLogs(Request $request)
+    {
+        $query = KandangMortalityLog::query()
+            ->with(['kandang.user:id,name', 'periode:id_periode,nama_periode', 'creator:id,name'])
+            ->whereIn('id_kandang', $this->accessibleKandangIds())
+            ->orderByDesc('tanggal')
+            ->orderByDesc('id');
+
+        if ($request->filled('id_kandang')) {
+            $query->where('id_kandang', $request->query('id_kandang'));
+        }
+
+        return response()->json([
+            'status' => true,
+            'data' => $query->limit(200)->get()->map(fn (KandangMortalityLog $log) => [
+                'id' => $log->id,
+                'id_kandang' => $log->id_kandang,
+                'id_periode' => $log->id_periode,
+                'nama_kandang' => $log->kandang?->nama_kandang,
+                'primary_owner_id' => $log->kandang?->user_id,
+                'primary_owner_name' => $log->kandang?->user?->name,
+                'nama_periode' => $log->periode?->nama_periode,
+                'tanggal' => $log->tanggal?->toDateString(),
+                'jumlah_kematian' => $log->jumlah_kematian,
+                'created_by' => $log->created_by,
+                'creator_name' => $log->creator?->name,
+                'created_at' => optional($log->created_at)?->format('Y-m-d H:i'),
+                'can_edit' => ! $this->isFarmWorker() || (int) $log->created_by === (int) $this->creatorId(),
+            ])->values(),
+        ]);
+    }
+
+    public function updateMortalityLog(Request $request, KandangMortalityLog $log)
+    {
+        $data = $request->validate([
+            'jumlah_kematian' => ['required', 'integer', 'min:1'],
+            'tanggal' => ['nullable', 'date'],
+        ]);
+
+        if (! $this->canAccessKandang($log->id_kandang)) {
+            return response()->json(['status' => false, 'message' => 'Data bukan milik user ini'], 403);
+        }
+
+        if ($this->isFarmWorker() && (int) $log->created_by !== (int) $this->creatorId()) {
+            return response()->json(['status' => false, 'message' => 'Farm worker hanya boleh koreksi catatan sendiri'], 403);
+        }
+
+        $kandang = Kandang::query()->findOrFail($log->id_kandang);
+        $periode = $log->id_periode ? KandangPeriode::query()->find($log->id_periode) : null;
+        $before = [
+            'log' => $log->toArray(),
+            'kandang' => $kandang->toArray(),
+            'periode' => $periode?->toArray(),
+        ];
+        $delta = (int) $data['jumlah_kematian'] - (int) $log->jumlah_kematian;
+
+        DB::transaction(function () use ($log, $kandang, $periode, $data, $delta) {
+            $log->update([
+                'jumlah_kematian' => (int) $data['jumlah_kematian'],
+                'tanggal' => $data['tanggal'] ?? $log->tanggal,
+            ]);
+
+            $this->applyMortalityDelta($kandang, $periode, $delta);
+        });
+
+        ActivityLogger::log('update', 'kandang_mortality', $log, $before, [
+            'log' => $log->fresh()->toArray(),
+            'kandang' => $kandang->fresh()->toArray(),
+            'periode' => $periode?->fresh()?->toArray(),
+        ], $request);
+
+        return response()->json(['status' => true, 'message' => 'Catatan kematian berhasil dikoreksi']);
+    }
+
+    public function deleteMortalityLog(Request $request, KandangMortalityLog $log)
+    {
+        if (! $this->canAccessKandang($log->id_kandang)) {
+            return response()->json(['status' => false, 'message' => 'Data bukan milik user ini'], 403);
+        }
+
+        if ($this->isFarmWorker() && (int) $log->created_by !== (int) $this->creatorId()) {
+            return response()->json(['status' => false, 'message' => 'Farm worker hanya boleh hapus catatan sendiri'], 403);
+        }
+
+        $kandang = Kandang::query()->findOrFail($log->id_kandang);
+        $periode = $log->id_periode ? KandangPeriode::query()->find($log->id_periode) : null;
+        $before = [
+            'log' => $log->toArray(),
+            'kandang' => $kandang->toArray(),
+            'periode' => $periode?->toArray(),
+        ];
+
+        DB::transaction(function () use ($log, $kandang, $periode) {
+            $this->applyMortalityDelta($kandang, $periode, -1 * (int) $log->jumlah_kematian);
+            $log->delete();
+        });
+
+        ActivityLogger::log('delete', 'kandang_mortality', $log, $before, [
+            'kandang' => $kandang->fresh()->toArray(),
+            'periode' => $periode?->fresh()?->toArray(),
+        ], $request);
+
+        return response()->json(['status' => true, 'message' => 'Catatan kematian berhasil dihapus']);
+    }
+
+    private function applyMortalityDelta(Kandang $kandang, ?KandangPeriode $periode, int $delta): void
+    {
+        if ($delta === 0) {
+            return;
+        }
+
+        $nextKandangTotal = max(0, (int) $kandang->total_kematian + $delta);
+        $kandang->update(['total_kematian' => $nextKandangTotal]);
+
+        if ($periode) {
+            $nextPeriodTotal = max(0, (int) $periode->total_kematian + $delta);
+            $periode->update(['total_kematian' => $nextPeriodTotal]);
+        }
     }
 
     public function correctMortality(Request $request)

@@ -3,17 +3,21 @@
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ActivityLogController;
 use App\Http\Controllers\Api\DashboardController;
+use App\Http\Controllers\Api\DistributionNotaController;
 use App\Http\Controllers\Api\FcrController;
 use App\Http\Controllers\Api\KandangAccessController;
 use App\Http\Controllers\Api\KandangController;
+use App\Http\Controllers\Api\MaintenanceController;
 use App\Http\Controllers\Api\OperasionalController;
 use App\Http\Controllers\Api\PakanController;
 use App\Http\Controllers\Api\ProduksiController;
+use App\Http\Controllers\Api\QrPrintBatchController;
 use App\Http\Controllers\Api\UserController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/register', [AuthController::class, 'register'])->middleware('throttle:3,1');
 Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:30,1');
+Route::get('/maintenance', [MaintenanceController::class, 'show'])->middleware('throttle:60,1');
 
 Route::middleware(['jwt', 'throttle:120,1'])->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
@@ -31,6 +35,9 @@ Route::middleware(['jwt', 'throttle:120,1'])->group(function () {
     Route::post('/kandang/edit', [KandangController::class, 'updateFromRequest']);
     Route::post('/kandang/set-periode', [KandangController::class, 'setPeriodeFromRequest']);
     Route::post('/kandang/mati', [KandangController::class, 'addMortalityFromRequest']);
+    Route::get('/kandang/kematian', [KandangController::class, 'mortalityLogs']);
+    Route::put('/kandang/kematian/{log}', [KandangController::class, 'updateMortalityLog']);
+    Route::delete('/kandang/kematian/{log}', [KandangController::class, 'deleteMortalityLog']);
     Route::post('/kandang/koreksi-mati', [KandangController::class, 'correctMortality']);
     Route::post('/kandang/hapus', [KandangController::class, 'destroy']);
     Route::put('/kandang/{kandang}', [KandangController::class, 'update']);
@@ -79,6 +86,17 @@ Route::middleware(['jwt', 'throttle:120,1'])->group(function () {
     Route::get('/dashboard/chart-produksi-tahunan', [DashboardController::class, 'yearlyProduction']);
 
     Route::get('/fcr/periode', [FcrController::class, 'periode']);
+
+    Route::get('/distribution/notas', [DistributionNotaController::class, 'index']);
+    Route::post('/distribution/notas', [DistributionNotaController::class, 'store']);
+    Route::get('/distribution/notas/{nota}', [DistributionNotaController::class, 'show']);
+    Route::put('/distribution/notas/{nota}', [DistributionNotaController::class, 'update']);
+    Route::delete('/distribution/notas/{nota}', [DistributionNotaController::class, 'destroy']);
+
+    Route::get('/qr-print-batches', [QrPrintBatchController::class, 'index']);
+    Route::post('/qr-print-batches', [QrPrintBatchController::class, 'store']);
+    Route::put('/qr-print-batches/{batch}', [QrPrintBatchController::class, 'update']);
+    Route::delete('/qr-print-batches/{batch}', [QrPrintBatchController::class, 'destroy']);
 });
 
 Route::middleware(['jwt', 'throttle:120,1', 'role:developer'])->prefix('users')->group(function () {
@@ -92,4 +110,5 @@ Route::middleware(['jwt', 'throttle:120,1', 'role:developer'])->group(function (
     Route::get('/developer/kandang-access', [KandangAccessController::class, 'index']);
     Route::put('/developer/kandang-access/{kandang}', [KandangAccessController::class, 'update']);
     Route::get('/developer/activity-logs', [ActivityLogController::class, 'index']);
+    Route::put('/developer/maintenance', [MaintenanceController::class, 'update']);
 });
