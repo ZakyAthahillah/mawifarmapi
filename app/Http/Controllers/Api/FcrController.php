@@ -25,12 +25,12 @@ class FcrController extends Controller
         $periode = null;
         if ($request->filled('id_periode')) {
             $periode = KandangPeriode::query()
-                ->where('user_id', $this->dataOwnerId())
+                ->whereIn('id_kandang', $this->accessibleKandangIds())
                 ->findOrFail($request->query('id_periode'));
         }
 
         $kandang = Kandang::query()
-            ->where('user_id', $this->dataOwnerId())
+            ->whereIn('id_kandang', $this->accessibleKandangIds())
             ->find($periode?->id_kandang ?? $request->query('id_kandang'));
         if (! $kandang) {
             return response()->json(['status' => false, 'message' => 'Kandang tidak ditemukan']);
@@ -118,13 +118,11 @@ class FcrController extends Controller
         }
 
         $pakanRows = PakanTerpakai::query()
-            ->where('user_id', $this->dataOwnerId())
             ->where('id_periode', $periode->id_periode)
             ->whereBetween('tanggal', [$rangeStart->toDateString(), $rangeEnd->toDateString()])
             ->get();
 
         $produksiRows = Produksi::query()
-            ->where('user_id', $this->dataOwnerId())
             ->where('id_periode', $periode->id_periode)
             ->whereBetween('tanggal', [$rangeStart->toDateString(), $rangeEnd->toDateString()])
             ->get();
@@ -149,7 +147,6 @@ class FcrController extends Controller
         });
         $totalRevenue = (float) $produksiRows->sum('total_harga');
         $operasionalRows = Operasional::query()
-            ->where('user_id', $this->dataOwnerId())
             ->where('id_periode', $periode->id_periode)
             ->whereBetween('tanggal', [$rangeStart->toDateString(), $rangeEnd->toDateString()])
             ->get();

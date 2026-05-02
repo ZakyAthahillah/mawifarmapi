@@ -7,6 +7,7 @@ use App\Models\KandangPeriode;
 use App\Models\Operasional;
 use App\Models\PakanTerpakai;
 use App\Models\Produksi;
+use App\Services\ActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -17,10 +18,10 @@ class OperasionalController extends Controller
         $query = Operasional::query()
             ->from('operasional as o')
             ->join('kandang as k', 'o.id_kandang', '=', 'k.id_kandang')
+            ->leftJoin('users as owner', 'k.user_id', '=', 'owner.id')
             ->leftJoin('kandang_periode as kp', 'o.id_periode', '=', 'kp.id_periode')
-            ->select('o.*', 'o.id_operasional as id', 'k.nama_kandang', 'kp.nama_periode')
-            ->where('o.user_id', $this->dataOwnerId())
-            ->where('k.user_id', $this->dataOwnerId());
+            ->select('o.*', 'o.id_operasional as id', 'k.nama_kandang', 'k.user_id as primary_owner_id', 'owner.name as primary_owner_name', 'kp.nama_periode')
+            ->whereIn('o.id_kandang', $this->accessibleKandangIds());
 
         if ($request->filled('bulan')) {
             $query->whereMonth('o.tanggal', $request->query('bulan'));
@@ -39,6 +40,8 @@ class OperasionalController extends Controller
             'id_kandang' => (int) $row->id_kandang,
             'id_periode' => $row->id_periode ? (int) $row->id_periode : null,
             'nama_kandang' => $row->nama_kandang,
+            'primary_owner_id' => $row->primary_owner_id ? (int) $row->primary_owner_id : null,
+            'primary_owner_name' => $row->primary_owner_name,
             'nama_periode' => $row->nama_periode,
             'tanggal' => $row->tanggal?->toDateString(),
             'rak' => (float) $row->rak,
@@ -49,21 +52,33 @@ class OperasionalController extends Controller
 
     public function store(Request $request)
     {
-        Operasional::create($this->validatedData($request) + [
-            'user_id' => $this->dataOwnerId(),
+        if ($response = $this->denyFarmWorker()) {
+            return $response;
+        }
+
+        $data = $this->validatedData($request);
+        $operasional = Operasional::create($data + [
+            'user_id' => $this->dataOwnerIdForKandang($data['id_kandang']),
             'created_by' => $this->creatorId(),
         ]);
+        ActivityLogger::log('create', 'operasional', $operasional, null, $operasional->toArray(), $request);
 
         return response()->json(['status' => 'success', 'message' => 'Berhasil simpan data operasional'], 201);
     }
 
     public function update(Request $request, Operasional $operasional)
     {
-        if ((int) $operasional->user_id !== (int) $this->dataOwnerId()) {
+        if ($response = $this->denyFarmWorker()) {
+            return $response;
+        }
+
+        if (! $this->canAccessKandang($operasional->id_kandang)) {
             return response()->json(['status' => false, 'message' => 'Data bukan milik user ini'], 403);
         }
 
+        $before = $operasional->toArray();
         $operasional->update($this->validatedData($request));
+        ActivityLogger::log('update', 'operasional', $operasional, $before, $operasional->fresh()->toArray(), $request);
 
         return response()->json(['status' => 'success', 'message' => 'Update Berhasil']);
     }
@@ -71,7 +86,7 @@ class OperasionalController extends Controller
     public function updateFromRequest(Request $request)
     {
         $operasional = Operasional::query()
-            ->where('user_id', $this->dataOwnerId())
+            ->whereIn('id_kandang', $this->accessibleKandangIds())
             ->findOrFail($request->input('id'));
 
         return $this->update($request, $operasional);
@@ -79,11 +94,17 @@ class OperasionalController extends Controller
 
     public function destroy(Operasional $operasional)
     {
-        if ((int) $operasional->user_id !== (int) $this->dataOwnerId()) {
+        if ($response = $this->denyFarmWorker()) {
+            return $response;
+        }
+
+        if (! $this->canAccessKandang($operasional->id_kandang)) {
             return response()->json(['status' => false, 'message' => 'Data bukan milik user ini'], 403);
         }
 
+        $before = $operasional->toArray();
         $operasional->delete();
+        ActivityLogger::log('delete', 'operasional', $operasional, $before, null);
 
         return response()->json(['status' => 'success', 'message' => 'Data berhasil dihapus']);
     }
@@ -91,7 +112,7 @@ class OperasionalController extends Controller
     public function destroyFromRequest(Request $request)
     {
         $operasional = Operasional::query()
-            ->where('user_id', $this->dataOwnerId())
+            ->whereIn('id_kandang', $this->accessibleKandangIds())
             ->findOrFail($request->input('id'));
 
         return $this->destroy($operasional);
@@ -100,12 +121,12 @@ class OperasionalController extends Controller
     public function yearlyRecap(Request $request)
     {
         $year = (int) $request->query('tahun', date('Y'));
-        $userId = $this->dataOwnerId();
+        $kandangIds = $this->accessibleKandangIds();
         $months = [];
 
         $productionRows = Produksi::query()
             ->with('kandang:id_kandang,nama_kandang')
-            ->where('user_id', $userId)
+            ->whereIn('id_kandang', $kandangIds)
             ->whereYear('tanggal', $year)
             ->orderBy('tanggal')
             ->get();
@@ -133,7 +154,7 @@ class OperasionalController extends Controller
 
         $feedRows = PakanTerpakai::query()
             ->with('kandang:id_kandang,nama_kandang')
-            ->where('user_id', $userId)
+            ->whereIn('id_kandang', $kandangIds)
             ->whereYear('tanggal', $year)
             ->orderBy('tanggal')
             ->get();
@@ -159,7 +180,7 @@ class OperasionalController extends Controller
 
         $operasionalRows = Operasional::query()
             ->with('kandang:id_kandang,nama_kandang')
-            ->where('user_id', $userId)
+            ->whereIn('id_kandang', $kandangIds)
             ->whereYear('tanggal', $year)
             ->orderBy('tanggal')
             ->get();
@@ -218,12 +239,12 @@ class OperasionalController extends Controller
             'id_kandang' => [
                 'required_without:id_periode',
                 'integer',
-                Rule::exists('kandang', 'id_kandang')->where(fn ($query) => $query->where('user_id', $this->dataOwnerId())),
+                Rule::in($this->accessibleKandangIds()),
             ],
             'id_periode' => [
                 'nullable',
                 'integer',
-                Rule::exists('kandang_periode', 'id_periode')->where(fn ($query) => $query->where('user_id', $this->dataOwnerId())),
+                Rule::exists('kandang_periode', 'id_periode')->where(fn ($query) => $query->whereIn('id_kandang', $this->accessibleKandangIds())),
             ],
             'tanggal' => ['required', 'date'],
             'rak' => ['nullable', 'numeric', 'min:0'],
@@ -248,12 +269,12 @@ class OperasionalController extends Controller
     {
         if (! empty($data['id_periode'])) {
             return KandangPeriode::query()
-                ->where('user_id', $this->dataOwnerId())
+                ->whereIn('id_kandang', $this->accessibleKandangIds())
                 ->findOrFail($data['id_periode']);
         }
 
         return KandangPeriode::query()
-            ->where('user_id', $this->dataOwnerId())
+            ->whereIn('id_kandang', $this->accessibleKandangIds())
             ->where('id_kandang', $data['id_kandang'])
             ->where('tanggal_mulai', '<=', $data['tanggal'])
             ->where(fn ($query) => $query->whereNull('tanggal_selesai')->orWhere('tanggal_selesai', '>=', $data['tanggal']))

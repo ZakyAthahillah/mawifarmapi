@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Services\JwtService;
+use App\Services\ActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
@@ -33,6 +34,8 @@ class AuthController extends Controller
         $user = User::create($data);
 
         $token = $jwt->createToken($user);
+        auth()->setUser($user);
+        ActivityLogger::log('login', 'auth', $user, null, ['username' => $user->username, 'role' => $user->role], $request);
 
         return $this->cookieResponse(response()->json([
             'status' => true,
@@ -71,6 +74,7 @@ class AuthController extends Controller
         $seconds = max(1, (int) $payload['exp'] - time());
 
         Cache::put('jwt:blacklist:'.$payload['jti'], true, $seconds);
+        ActivityLogger::log('logout', 'auth', auth()->user(), null, ['username' => auth()->user()?->username], $request);
 
         return $this->forgetCookie(response()->json(['status' => true, 'message' => 'Logout berhasil']));
     }
@@ -80,15 +84,41 @@ class AuthController extends Controller
         return response()->json(['status' => true, 'data' => $this->userData(auth()->user())]);
     }
 
+    public function changePassword(Request $request)
+    {
+        $data = $request->validate([
+            'current_password' => ['required', 'string'],
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
+        ]);
+
+        $user = $request->user();
+
+        if (! $user || ! Hash::check($data['current_password'], $user->password)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Password lama tidak sesuai',
+            ], 422);
+        }
+
+        $user->update(['password' => $data['password']]);
+        ActivityLogger::log('change_password', 'auth', $user, null, ['username' => $user->username], $request);
+
+        return response()->json([
+            'status' => true,
+            'message' => 'Password berhasil diganti',
+        ]);
+    }
+
     private function userData(User $user): array
     {
         return [
+            'id' => $user->id,
             'name' => $user->name,
             'email' => $user->email,
             'username' => $user->username,
             'role' => $user->role,
             'owner_id' => $user->owner_id,
-            'owner_options' => $user->role === 'admin'
+            'owner_options' => in_array($user->role, ['admin', 'farm_worker'], true)
                 ? $user->ownerAccess()->get(['users.id', 'users.name'])->map(fn (User $owner) => [
                     'id' => $owner->id,
                     'name' => $owner->name,

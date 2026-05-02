@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Kandang;
 use App\Models\KandangPeriode;
+use App\Services\ActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -14,17 +15,27 @@ class KandangController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Kandang::query()->where('user_id', $this->dataOwnerId());
+        $query = Kandang::query()->whereIn('id_kandang', $this->accessibleKandangIds());
 
         if ($request->filled('name')) {
             $query->where('nama_kandang', 'like', '%'.$request->query('name').'%');
         }
 
-        return response()->json($query->orderBy('nama_kandang')->get());
+        return response()->json($query->with('user:id,name')->orderBy('nama_kandang')->get()->map(function (Kandang $row) {
+            $row->primary_owner_id = $row->user_id;
+            $row->primary_owner_name = $row->user?->name;
+            unset($row->user);
+
+            return $row;
+        }));
     }
 
     public function store(Request $request)
     {
+        if ($response = $this->denyFarmWorker()) {
+            return $response;
+        }
+
         $data = $request->validate([
             'nama_kandang' => [
                 'required',
@@ -38,7 +49,7 @@ class KandangController extends Controller
             'tanggal_selesai' => ['nullable', 'date'],
         ]);
 
-        DB::transaction(function () use ($data) {
+        $kandang = DB::transaction(function () use ($data) {
             $kandang = Kandang::create($data + [
                 'user_id' => $this->dataOwnerId(),
                 'created_by' => $this->creatorId(),
@@ -55,7 +66,10 @@ class KandangController extends Controller
                 'tanggal_selesai' => $data['tanggal_selesai'] ?? null,
                 'status' => empty($data['tanggal_selesai']) ? 'aktif' : 'selesai',
             ]);
+
+            return $kandang;
         });
+        ActivityLogger::log('create', 'kandang', $kandang, null, $kandang->toArray(), $request);
 
         return response()->json(['status' => true, 'message' => 'Berhasil menambahkan kandang!'], 201);
     }
@@ -64,7 +78,8 @@ class KandangController extends Controller
     {
         $query = Kandang::query()
             ->with(['periodes' => fn ($query) => $query->orderByRaw("status = 'aktif' desc")->orderByDesc('tanggal_mulai')->orderByDesc('id_periode')])
-            ->where('user_id', $this->dataOwnerId());
+            ->with('user:id,name')
+            ->whereIn('id_kandang', $this->accessibleKandangIds());
 
         if ($request->filled('owner_name') || $request->filled('name')) {
             $search = $request->query('owner_name', $request->query('name', ''));
@@ -76,6 +91,8 @@ class KandangController extends Controller
             ->map(function ($row) {
                 $periode = $row->periodes->first();
                 $row->nama_tampilan = $row->nama_kandang;
+                $row->primary_owner_id = $row->user_id;
+                $row->primary_owner_name = $row->user?->name;
                 $row->jumlah_periode = $row->periodes->count();
                 $row->id_periode = $periode?->id_periode;
                 $row->nama_periode = $periode?->nama_periode ?? '-';
@@ -85,7 +102,7 @@ class KandangController extends Controller
                 $row->ayam_sekarang = max(0, (int) $row->populasi - (int) $row->total_kematian);
                 $row->tanggal_mulai = $periode?->tanggal_mulai ?? $row->tanggal_mulai;
                 $row->tanggal_selesai = $periode?->tanggal_selesai;
-                unset($row->periodes);
+                unset($row->periodes, $row->user);
 
                 return $row;
             });
@@ -98,17 +115,29 @@ class KandangController extends Controller
         $name = $request->query('name', '');
 
         $data = Kandang::query()
-            ->select('id_kandang', 'nama_kandang')
-            ->where('user_id', $this->dataOwnerId())
+            ->select('id_kandang', 'user_id', 'nama_kandang')
+            ->whereIn('id_kandang', $this->accessibleKandangIds())
             ->when($name !== '', fn ($query) => $query->where('nama_kandang', 'like', "%$name%"))
             ->orderBy('nama_kandang')
-            ->get();
+            ->with('user:id,name')
+            ->get()
+            ->map(function (Kandang $row) {
+                $row->primary_owner_id = $row->user_id;
+                $row->primary_owner_name = $row->user?->name;
+                unset($row->user);
+
+                return $row;
+            });
 
         return response()->json($data);
     }
 
     public function update(Request $request, Kandang $kandang)
     {
+        if ($response = $this->denyFarmWorker()) {
+            return $response;
+        }
+
         $data = $request->validate([
             'nama_kandang' => [
                 'required',
@@ -128,6 +157,7 @@ class KandangController extends Controller
             return response()->json(['status' => false, 'message' => 'Data bukan milik user ini'], 403);
         }
 
+        $before = $kandang->toArray();
         DB::transaction(function () use ($kandang, $data) {
             $kandang->update($data);
 
@@ -142,6 +172,7 @@ class KandangController extends Controller
                 ]);
             }
         });
+        ActivityLogger::log('update', 'kandang', $kandang, $before, $kandang->fresh()->toArray(), $request);
 
         return response()->json(['status' => true, 'message' => 'Success']);
     }
@@ -149,7 +180,7 @@ class KandangController extends Controller
     public function updateFromRequest(Request $request)
     {
         $kandang = Kandang::query()
-            ->where('user_id', $this->dataOwnerId())
+            ->whereIn('id_kandang', $this->accessibleKandangIds())
             ->findOrFail($request->input('id_kandang'));
 
         return $this->update($request, $kandang);
@@ -157,15 +188,20 @@ class KandangController extends Controller
 
     public function setPeriode(Request $request, Kandang $kandang)
     {
+        if ($response = $this->denyFarmWorker()) {
+            return $response;
+        }
+
         $data = $request->validate([
             'tanggal_mulai' => ['required', 'date'],
             'tanggal_selesai' => ['nullable', 'date'],
         ]);
 
-        if ((int) $kandang->user_id !== (int) $this->dataOwnerId()) {
+        if (! $this->canAccessKandang($kandang->id_kandang)) {
             return response()->json(['status' => false, 'message' => 'Data bukan milik user ini'], 403);
         }
 
+        $before = $kandang->toArray();
         $kandang->update($data);
 
         $periode = $this->editablePeriod($kandang);
@@ -177,6 +213,7 @@ class KandangController extends Controller
                 'status' => empty($data['tanggal_selesai']) ? 'aktif' : 'selesai',
             ]);
         }
+        ActivityLogger::log('update', 'kandang_periode', $kandang, $before, $kandang->fresh()->toArray(), $request);
 
         return response()->json(['status' => true, 'message' => 'Periode kandang disimpan']);
     }
@@ -203,10 +240,11 @@ class KandangController extends Controller
     {
         $data = $request->validate(['jumlah_kematian' => ['required', 'integer', 'min:1']]);
 
-        if ((int) $kandang->user_id !== (int) $this->dataOwnerId()) {
+        if (! $this->canAccessKandang($kandang->id_kandang)) {
             return response()->json(['status' => false, 'message' => 'Data bukan milik user ini'], 403);
         }
 
+        $before = $kandang->toArray();
         $kandang->increment('total_kematian', $data['jumlah_kematian']);
 
         $periode = $this->editablePeriod($kandang);
@@ -214,6 +252,7 @@ class KandangController extends Controller
         if ($periode) {
             $periode->increment('total_kematian', $data['jumlah_kematian']);
         }
+        ActivityLogger::log('update', 'kandang', $kandang, $before, $kandang->fresh()->toArray(), $request);
 
         return response()->json(['status' => true, 'message' => 'Success']);
     }
@@ -226,7 +265,7 @@ class KandangController extends Controller
         ]);
 
         $kandang = Kandang::query()
-            ->where('user_id', $this->dataOwnerId())
+            ->whereIn('id_kandang', $this->accessibleKandangIds())
             ->findOrFail($data['id_kandang']);
 
         $periode = $this->editablePeriod($kandang);
@@ -239,12 +278,21 @@ class KandangController extends Controller
             return response()->json(['status' => false, 'message' => 'Jumlah koreksi melebihi total kematian tercatat'], 422);
         }
 
+        $before = [
+            'kandang' => $kandang->toArray(),
+            'periode' => $periode->toArray(),
+        ];
+
         DB::transaction(function () use ($kandang, $periode, $data) {
             $nextTotal = max(0, (int) $periode->total_kematian - (int) $data['jumlah_koreksi']);
 
             $periode->update(['total_kematian' => $nextTotal]);
             $kandang->update(['total_kematian' => $nextTotal]);
         });
+        ActivityLogger::log('update', 'kandang', $kandang, $before, [
+            'kandang' => $kandang->fresh()->toArray(),
+            'periode' => $periode->fresh()->toArray(),
+        ], $request);
 
         return response()->json(['status' => true, 'message' => 'Koreksi kematian berhasil disimpan']);
     }
@@ -256,7 +304,7 @@ class KandangController extends Controller
         ]);
 
         $kandang = Kandang::query()
-            ->where('user_id', $this->dataOwnerId())
+            ->whereIn('id_kandang', $this->accessibleKandangIds())
             ->findOrFail($request->query('id_kandang'));
 
         $data = $kandang->periodes()
@@ -287,11 +335,15 @@ class KandangController extends Controller
 
     public function storePeriod(Request $request)
     {
+        if ($response = $this->denyFarmWorker()) {
+            return $response;
+        }
+
         $data = $request->validate([
             'id_kandang' => [
                 'required',
                 'integer',
-                Rule::exists('kandang', 'id_kandang')->where(fn ($query) => $query->where('user_id', $this->dataOwnerId())),
+                Rule::in($this->accessibleKandangIds()),
             ],
             'nama_periode' => ['nullable', 'string', 'max:255'],
             'populasi_awal' => ['required', 'integer', 'min:0'],
@@ -300,7 +352,7 @@ class KandangController extends Controller
         ]);
 
         $kandang = Kandang::query()
-            ->where('user_id', $this->dataOwnerId())
+            ->whereIn('id_kandang', $this->accessibleKandangIds())
             ->findOrFail($data['id_kandang']);
 
         $periodeCount = $kandang->periodes()->count() + 1;
@@ -316,7 +368,7 @@ class KandangController extends Controller
                 ]);
 
             $periode = KandangPeriode::create([
-                'user_id' => $this->dataOwnerId(),
+                'user_id' => $this->dataOwnerIdForKandang($kandang->id_kandang),
                 'created_by' => $this->creatorId(),
                 'id_kandang' => $kandang->id_kandang,
                 'nama_periode' => $data['nama_periode'] ?? "Periode $periodeCount",
@@ -336,6 +388,7 @@ class KandangController extends Controller
 
             return $periode;
         });
+        ActivityLogger::log('create', 'kandang_periode', $periode, null, $periode->toArray(), $request);
 
         return response()->json(['status' => true, 'message' => 'Periode baru berhasil dibuat', 'data' => $periode], 201);
     }
@@ -343,7 +396,7 @@ class KandangController extends Controller
     public function addMortalityFromRequest(Request $request)
     {
         $kandang = Kandang::query()
-            ->where('user_id', $this->dataOwnerId())
+            ->whereIn('id_kandang', $this->accessibleKandangIds())
             ->findOrFail($request->input('id_kandang'));
 
         return $this->addMortality($request, $kandang);
@@ -351,11 +404,17 @@ class KandangController extends Controller
 
     public function destroy(Request $request)
     {
+        if ($response = $this->denyFarmWorker()) {
+            return $response;
+        }
+
         $kandang = Kandang::query()
             ->where('user_id', $this->dataOwnerId())
             ->findOrFail($request->input('id_kandang'));
 
+        $before = $kandang->toArray();
         $kandang->delete();
+        ActivityLogger::log('delete', 'kandang', $kandang, $before, null, $request);
 
         return response()->json(['status' => true, 'message' => 'Data kandang berhasil dihapus']);
     }

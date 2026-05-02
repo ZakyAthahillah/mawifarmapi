@@ -12,7 +12,7 @@ class DashboardController extends Controller
     public function kandangSummary(Request $request)
     {
         $row = DB::table('kandang')
-            ->where('user_id', $this->dataOwnerId())
+            ->whereIn('id_kandang', $this->accessibleKandangIds())
             ->selectRaw('SUM(populasi) as total_populasi, SUM(total_kematian) as total_kematian')
             ->first();
 
@@ -40,7 +40,6 @@ class DashboardController extends Controller
         $month = now()->month;
 
         $mtd = Produksi::query()
-            ->where('user_id', $this->dataOwnerId())
             ->whereIn('id_kandang', $ids)
             ->whereYear('tanggal', $year)
             ->whereMonth('tanggal', $month)
@@ -48,7 +47,6 @@ class DashboardController extends Controller
             ->sum(fn (Produksi $row) => $this->productionWeightTotal($row));
 
         $ytd = Produksi::query()
-            ->where('user_id', $this->dataOwnerId())
             ->whereIn('id_kandang', $ids)
             ->whereYear('tanggal', $year)
             ->get()
@@ -66,7 +64,6 @@ class DashboardController extends Controller
         }
 
         $data = Produksi::query()
-            ->where('user_id', $this->dataOwnerId())
             ->whereIn('id_kandang', $ids)
             ->whereYear('tanggal', now()->year)
             ->whereMonth('tanggal', now()->month)
@@ -102,7 +99,6 @@ class DashboardController extends Controller
 
         $year = (int) $request->query('year', date('Y'));
         $rows = Produksi::query()
-            ->where('user_id', $this->dataOwnerId())
             ->whereIn('id_kandang', $ids)
             ->whereYear('tanggal', $year)
             ->get()
@@ -121,9 +117,7 @@ class DashboardController extends Controller
 
     private function kandangIds()
     {
-        return DB::table('kandang')
-            ->where('user_id', $this->dataOwnerId())
-            ->pluck('id_kandang');
+        return collect($this->accessibleKandangIds());
     }
 
     private function productionWeightTotal(Produksi $row): float

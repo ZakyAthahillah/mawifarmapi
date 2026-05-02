@@ -4,12 +4,13 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Services\ActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
 class UserController extends Controller
 {
-    private const ROLES = ['developer', 'admin', 'user', 'owner'];
+    private const ROLES = ['developer', 'admin', 'user', 'owner', 'farm_worker'];
 
     public function index()
     {
@@ -31,6 +32,7 @@ class UserController extends Controller
 
         $user = User::create($data);
         $user->ownerAccess()->sync($ownerIds);
+        ActivityLogger::log('create', 'users', $user, null, $this->loggableUser($user), $request);
 
         return response()->json([
             'status' => true,
@@ -60,8 +62,10 @@ class UserController extends Controller
             unset($data['password']);
         }
 
+        $before = $this->loggableUser($user);
         $user->update($data);
         $user->ownerAccess()->sync($ownerIds);
+        ActivityLogger::log('update', 'users', $user, $before, $this->loggableUser($user->fresh()), $request);
 
         return response()->json([
             'status' => true,
@@ -86,7 +90,9 @@ class UserController extends Controller
             ], 422);
         }
 
+        $before = $this->loggableUser($user);
         $user->delete();
+        ActivityLogger::log('delete', 'users', $user, $before, null, request());
 
         return response()->json([
             'status' => true,
@@ -125,7 +131,7 @@ class UserController extends Controller
             ],
         ]);
 
-        if (($data['role'] ?? '') !== 'admin') {
+        if (! in_array(($data['role'] ?? ''), ['admin', 'farm_worker'], true)) {
             $data['owner_id'] = null;
             $data['owner_ids'] = [];
         } else {
@@ -152,8 +158,8 @@ class UserController extends Controller
             'username' => $user->username,
             'role' => $user->role,
             'owner_id' => $user->owner_id,
-            'owner_ids' => $user->role === 'admin' ? $user->ownerAccess()->pluck('users.id')->map(fn ($id) => (int) $id)->values() : [],
-            'owner_names' => $user->role === 'admin' ? $user->ownerAccess()->pluck('users.name')->values() : [],
+            'owner_ids' => in_array($user->role, ['admin', 'farm_worker'], true) ? $user->ownerAccess()->pluck('users.id')->map(fn ($id) => (int) $id)->values() : [],
+            'owner_names' => in_array($user->role, ['admin', 'farm_worker'], true) ? $user->ownerAccess()->pluck('users.name')->values() : [],
             'owner_name' => $user->owner_id ? User::query()->whereKey($user->owner_id)->value('name') : null,
             'created_at' => optional($user->created_at)?->format('Y-m-d H:i'),
         ];
@@ -163,5 +169,17 @@ class UserController extends Controller
     {
         return (string) $user->role === 'developer'
             && User::query()->where('role', 'developer')->whereKeyNot($user->id)->doesntExist();
+    }
+
+    private function loggableUser(User $user): array
+    {
+        return [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'username' => $user->username,
+            'role' => $user->role,
+            'owner_id' => $user->owner_id,
+        ];
     }
 }

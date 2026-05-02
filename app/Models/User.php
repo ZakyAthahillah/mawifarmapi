@@ -50,7 +50,7 @@ class User extends Authenticatable
 
     public function dataOwnerId(): int
     {
-        if ((string) $this->role !== 'admin') {
+        if (! in_array((string) $this->role, ['admin', 'farm_worker'], true)) {
             return (int) $this->id;
         }
 
@@ -85,6 +85,11 @@ class User extends Authenticatable
     public function kandang()
     {
         return $this->hasMany(Kandang::class, 'user_id');
+    }
+
+    public function sharedKandang()
+    {
+        return $this->belongsToMany(Kandang::class, 'kandang_owner_access', 'owner_id', 'id_kandang');
     }
 
     public function pakanTerpakai()

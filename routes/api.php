@@ -1,8 +1,10 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\ActivityLogController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\FcrController;
+use App\Http\Controllers\Api\KandangAccessController;
 use App\Http\Controllers\Api\KandangController;
 use App\Http\Controllers\Api\OperasionalController;
 use App\Http\Controllers\Api\PakanController;
@@ -16,6 +18,7 @@ Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:30
 Route::middleware(['jwt', 'throttle:120,1'])->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/me', [AuthController::class, 'me']);
+    Route::post('/change-password', [AuthController::class, 'changePassword']);
 
     Route::get('/get-kandang-user', [KandangController::class, 'search']);
     Route::get('/kandang', [KandangController::class, 'index']);
@@ -83,4 +86,10 @@ Route::middleware(['jwt', 'throttle:120,1', 'role:developer'])->prefix('users')-
     Route::post('/', [UserController::class, 'store']);
     Route::put('/{user}', [UserController::class, 'update']);
     Route::delete('/{user}', [UserController::class, 'destroy']);
+});
+
+Route::middleware(['jwt', 'throttle:120,1', 'role:developer'])->group(function () {
+    Route::get('/developer/kandang-access', [KandangAccessController::class, 'index']);
+    Route::put('/developer/kandang-access/{kandang}', [KandangAccessController::class, 'update']);
+    Route::get('/developer/activity-logs', [ActivityLogController::class, 'index']);
 });
