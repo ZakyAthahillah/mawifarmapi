@@ -59,6 +59,8 @@ class AuthController extends Controller
         }
 
         $token = $jwt->createToken($user);
+        auth()->setUser($user);
+        ActivityLogger::log('login', 'auth', $user, null, ['username' => $user->username, 'role' => $user->role], $request);
 
         return $this->cookieResponse(response()->json([
             'status' => true,
@@ -122,6 +124,8 @@ class AuthController extends Controller
             'role' => $user->role,
             'owner_id' => $user->owner_id,
             'must_change_password' => (bool) $user->must_change_password,
+            'last_login_at' => $user->last_login_at?->toISOString(),
+            'last_logout_at' => $user->last_logout_at?->toISOString(),
             'owner_options' => in_array($user->role, ['admin', 'farm_worker'], true)
                 ? $user->ownerAccess()->get(['users.id', 'users.name'])->map(fn (User $owner) => [
                     'id' => $owner->id,

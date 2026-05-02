@@ -24,6 +24,9 @@ class User extends Authenticatable
         'role',
         'owner_id',
         'must_change_password',
+        'last_seen_at',
+        'last_login_at',
+        'last_logout_at',
     ];
 
     /**
@@ -47,6 +50,9 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'must_change_password' => 'boolean',
+            'last_seen_at' => 'datetime',
+            'last_login_at' => 'datetime',
+            'last_logout_at' => 'datetime',
         ];
     }
 

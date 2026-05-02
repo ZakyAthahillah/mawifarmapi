@@ -162,6 +162,8 @@ class UserController extends Controller
             'role' => $user->role,
             'owner_id' => $user->owner_id,
             'must_change_password' => (bool) $user->must_change_password,
+            'last_login_at' => $user->last_login_at?->toISOString(),
+            'last_logout_at' => $user->last_logout_at?->toISOString(),
             'owner_ids' => in_array($user->role, ['admin', 'farm_worker'], true) ? $user->ownerAccess()->pluck('users.id')->map(fn ($id) => (int) $id)->values() : [],
             'owner_names' => in_array($user->role, ['admin', 'farm_worker'], true) ? $user->ownerAccess()->pluck('users.name')->values() : [],
             'owner_name' => $user->owner_id ? User::query()->whereKey($user->owner_id)->value('name') : null,
