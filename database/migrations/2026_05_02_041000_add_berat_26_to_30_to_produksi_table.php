@@ -11,7 +11,7 @@ return new class extends Migration
         Schema::table('produksi', function (Blueprint $table) {
             foreach (range(26, 30) as $index) {
                 if (! Schema::hasColumn('produksi', "berat{$index}")) {
-                    $table->decimal("berat{$index}", 10, 2)->default(0)->after('berat25');
+                    $table->text("berat{$index}")->nullable()->after('berat25');
                 }
             }
         });
