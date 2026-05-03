@@ -20,10 +20,6 @@ class DistributionNotaController extends Controller
             ->orderByDesc('tanggal')
             ->orderByDesc('id');
 
-        if (! $this->isDeveloper()) {
-            $query->where('user_id', $this->dataOwnerId());
-        }
-
         if ($request->filled('bulan')) {
             $query->whereMonth('tanggal', $request->query('bulan'));
         }
@@ -158,14 +154,24 @@ class DistributionNotaController extends Controller
     {
         $role = (string) auth()->user()?->role;
 
-        if (in_array($role, ['developer', 'distribution'], true)) {
+        if (in_array($role, ['developer', 'distribution', 'admin'], true)) {
             return null;
         }
 
         return response()->json([
             'status' => false,
-            'message' => 'Menu Nota hanya untuk role Distribution dan Developer.',
+            'message' => 'Menu Nota hanya untuk role Distribution, Admin, dan Developer.',
         ], 403);
+    }
+
+    private function isAdmin(): bool
+    {
+        return (string) auth()->user()?->role === 'admin';
+    }
+
+    private function isDistribution(): bool
+    {
+        return (string) auth()->user()?->role === 'distribution';
     }
 
     private function nextNotaNumber(int $ownerId, string $tanggal): string
@@ -187,7 +193,9 @@ class DistributionNotaController extends Controller
 
     private function canAccessNota(DistributionNota $nota): bool
     {
-        return $this->isDeveloper() || (int) $nota->user_id === (int) $this->dataOwnerId();
+        return $this->isDeveloper()
+            || $this->isAdmin()
+            || $this->isDistribution();
     }
 
     private function serialize(DistributionNota $nota): array
