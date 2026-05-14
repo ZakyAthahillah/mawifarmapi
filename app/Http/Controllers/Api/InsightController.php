@@ -367,6 +367,13 @@ class InsightController extends Controller
                 - ($production30 <= 0 ? 18 : 0)
                 - ($trendPct !== null && $trendPct < 0 ? min(15, abs($trendPct) * 0.4) : 0)
             ));
+            $scorePenalties = [
+                'fcr' => round(max(0, (($fcr ?? 0) - 2.4) * 18), 2),
+                'mortality' => round(max(0, (($mortalityPct7 ?? 0) - 0.8) * 18), 2),
+                'margin' => round(max(0, 18 - ($profitMargin ?? 0)) * 0.75, 2),
+                'missing_production' => $production30 <= 0 ? 18 : 0,
+                'production_trend' => round($trendPct !== null && $trendPct < 0 ? min(15, abs($trendPct) * 0.4) : 0, 2),
+            ];
 
             $rootCauses = $this->rootCausesForKandang($trendPct, $fcr, $mortalityPct7, $profitMargin, $feed7, $production7, $productionPrev7);
             $action = $this->actionForKandang([
@@ -408,8 +415,56 @@ class InsightController extends Controller
                 ],
                 'root_causes' => $rootCauses,
                 'suggestion' => $action,
+                'explanation' => [
+                    'analysis_period' => [
+                        'start' => $ranges['analysisStart'],
+                        'end' => $ranges['analysisEnd'] ?? null,
+                        'days' => $analysisDays,
+                        'note' => 'Data hari ini tidak dihitung karena produksi biasanya baru lengkap setelah pengambilan sore.',
+                    ],
+                    'fcr' => [
+                        'formula' => 'total_pakan_kg / total_produksi_kg',
+                        'feed_kg' => round($feed30, 2),
+                        'production_kg' => round($production30, 2),
+                        'result' => $fcr !== null ? round($fcr, 3) : null,
+                    ],
+                    'trend' => [
+                        'formula' => '((produksi_7_hari_terakhir - produksi_7_hari_sebelumnya) / produksi_7_hari_sebelumnya) x 100',
+                        'last_7_days_kg' => round($production7, 2),
+                        'previous_7_days_kg' => round($productionPrev7, 2),
+                        'result_pct' => $trendPct !== null ? round($trendPct, 2) : null,
+                    ],
+                    'score' => [
+                        'formula' => '100 - penalti FCR - penalti mortalitas - penalti margin - penalti data produksi - penalti tren turun',
+                        'start' => 100,
+                        'penalties' => $scorePenalties,
+                        'result' => round($score, 0),
+                    ],
+                    'reason' => $this->priorityReason($rootCauses, $score, $trendPct, $fcr, $mortalityPct7),
+                ],
             ];
         })->values()->all();
+    }
+
+    private function priorityReason(array $rootCauses, float $score, ?float $trendPct, ?float $fcr, ?float $mortalityPct7): string
+    {
+        if ($mortalityPct7 !== null && $mortalityPct7 > 0.8) {
+            return 'Masuk perhatian karena mortalitas 7 hari terakhir melewati batas pantau otomatis.';
+        }
+
+        if ($trendPct !== null && $trendPct <= -12) {
+            return 'Masuk prioritas karena tren produksi turun '.$this->formatPercent(abs($trendPct)).' dibanding 7 hari sebelumnya.';
+        }
+
+        if ($fcr !== null && $fcr > 2.4) {
+            return 'Masuk perhatian karena FCR melewati batas pantau 2,400.';
+        }
+
+        if ($score < 85 || count($rootCauses) > 0) {
+            return 'Masuk perhatian karena ada indikator produksi, pakan, mortalitas, atau margin yang perlu dipantau.';
+        }
+
+        return 'Tidak ada sinyal risiko utama. Kandang ini ditampilkan sebagai pembanding karena skornya stabil.';
     }
 
     private function rootCausesForKandang(?float $trendPct, ?float $fcr, ?float $mortalityPct7, ?float $profitMargin, float $feed7, float $production7, float $productionPrev7): array
