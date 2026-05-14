@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\ActivityLogController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\DistributionNotaController;
 use App\Http\Controllers\Api\FcrController;
+use App\Http\Controllers\Api\InsightController;
 use App\Http\Controllers\Api\KandangAccessController;
 use App\Http\Controllers\Api\KandangController;
 use App\Http\Controllers\Api\MaintenanceController;
@@ -86,6 +87,7 @@ Route::middleware(['jwt', 'throttle:120,1'])->group(function () {
     Route::get('/dashboard/chart-produksi-tahunan', [DashboardController::class, 'yearlyProduction']);
 
     Route::get('/fcr/periode', [FcrController::class, 'periode']);
+    Route::get('/insights/prediksi', [InsightController::class, 'prediksi']);
 
     Route::get('/distribution/notas', [DistributionNotaController::class, 'index']);
     Route::post('/distribution/notas', [DistributionNotaController::class, 'store']);
