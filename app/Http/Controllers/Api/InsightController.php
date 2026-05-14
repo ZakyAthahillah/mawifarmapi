@@ -26,8 +26,13 @@ class InsightController extends Controller
         }
 
         $today = now()->startOfDay();
+        $reliableStart = $today->copy()->setDate(2026, 5, 1)->startOfDay();
         $from60 = $today->copy()->subDays(59)->toDateString();
-        $from30 = $today->copy()->subDays(29)->toDateString();
+        $analysisStart = $today->copy()->subDays(29)->greaterThan($reliableStart)
+            ? $today->copy()->subDays(29)
+            : $reliableStart;
+        $analysisStartDate = $analysisStart->toDateString();
+        $analysisDays = max(1, (int) $analysisStart->diffInDays($today) + 1);
         $from14 = $today->copy()->subDays(13)->toDateString();
         $from7 = $today->copy()->subDays(6)->toDateString();
         $prev7Start = $today->copy()->subDays(13)->toDateString();
@@ -54,11 +59,11 @@ class InsightController extends Controller
             ->get();
         $pakanRows = PakanTerpakai::query()
             ->whereIn('id_kandang', $activeKandangIds)
-            ->whereDate('tanggal', '>=', $from30)
+            ->whereDate('tanggal', '>=', $analysisStartDate)
             ->get();
         $operasionalRows = Operasional::query()
             ->whereIn('id_kandang', $activeKandangIds)
-            ->whereDate('tanggal', '>=', $from30)
+            ->whereDate('tanggal', '>=', $analysisStartDate)
             ->get();
         $mortalityRows = KandangMortalityLog::query()
             ->whereIn('id_kandang', $activeKandangIds)
@@ -74,7 +79,7 @@ class InsightController extends Controller
         $liveBirds = $activePeriods->sum(fn (KandangPeriode $row) => max(0, (int) $row->populasi_awal - (int) $row->total_kematian));
 
         $productionLast30 = (float) $produksiRows
-            ->filter(fn (Produksi $row) => $row->tanggal->toDateString() >= $from30)
+            ->filter(fn (Produksi $row) => $row->tanggal->toDateString() >= $analysisStartDate)
             ->sum(fn (Produksi $row) => $this->productionWeightTotal($row));
         $productionLast14 = (float) $produksiRows
             ->filter(fn (Produksi $row) => $row->tanggal->toDateString() >= $from14)
@@ -86,18 +91,18 @@ class InsightController extends Controller
             ->filter(fn (Produksi $row) => $row->tanggal->toDateString() >= $prev7Start && $row->tanggal->toDateString() <= $prev7End)
             ->sum(fn (Produksi $row) => $this->productionWeightTotal($row));
 
-        $dailyProductionAvg = $productionLast14 > 0 ? $productionLast14 / 14 : ($productionLast30 > 0 ? $productionLast30 / 30 : 0);
+        $dailyProductionAvg = $productionLast14 > 0 ? $productionLast14 / 14 : ($productionLast30 > 0 ? $productionLast30 / $analysisDays : 0);
         $trendPct = $productionPrev7 > 0 ? (($productionLast7 - $productionPrev7) / $productionPrev7) * 100 : null;
 
         $feedLast30 = (float) $pakanRows->sum('jumlah_kg');
         $feedCostLast30 = (float) $pakanRows->sum('total_harga');
-        $dailyFeedAvg = $feedLast30 > 0 ? $feedLast30 / 30 : 0;
+        $dailyFeedAvg = $feedLast30 > 0 ? $feedLast30 / $analysisDays : 0;
         $operationalCostLast30 = (float) $operasionalRows->sum(fn (Operasional $row) => (float) $row->rak + (float) $row->gaji + (float) $row->lain);
         $revenueLast30 = (float) $produksiRows
-            ->filter(fn (Produksi $row) => $row->tanggal->toDateString() >= $from30)
+            ->filter(fn (Produksi $row) => $row->tanggal->toDateString() >= $analysisStartDate)
             ->sum('total_harga');
         $profitLast30 = $revenueLast30 - ($feedCostLast30 + $operationalCostLast30);
-        $dailyProfitAvg = $profitLast30 !== 0.0 ? $profitLast30 / 30 : 0;
+        $dailyProfitAvg = $profitLast30 !== 0.0 ? $profitLast30 / $analysisDays : 0;
         $fcr = $productionLast30 > 0 ? $feedLast30 / $productionLast30 : null;
 
         $mortalityLast7 = (int) $mortalityRows
@@ -121,7 +126,7 @@ class InsightController extends Controller
             $anomalies[] = [
                 'tone' => 'amber',
                 'title' => 'FCR tinggi',
-                'text' => 'FCR 30 hari terakhir '.$this->formatNumber($fcr, 3).'. Pakan belum sebanding dengan produksi telur.',
+                'text' => 'FCR '.$analysisDays.' hari terakhir '.$this->formatNumber($fcr, 3).'. Pakan belum sebanding dengan produksi telur.',
             ];
         }
         if ($mortalityPrev7 > 0 && $mortalityLast7 > $mortalityPrev7 * 1.5) {
@@ -135,7 +140,7 @@ class InsightController extends Controller
             $anomalies[] = [
                 'tone' => 'amber',
                 'title' => 'Margin tipis',
-                'text' => 'Margin profit 30 hari terakhir '.$this->formatPercent($profitMargin).'.',
+                'text' => 'Margin profit '.$analysisDays.' hari terakhir '.$this->formatPercent($profitMargin).'.',
             ];
         }
 
@@ -161,7 +166,7 @@ class InsightController extends Controller
             $recommendations[] = [
                 'tone' => 'green',
                 'title' => 'Kebutuhan pakan',
-                'text' => 'Siapkan sekitar '.$this->formatNumber($dailyFeedAvg * 7, 2).' kg pakan untuk 7 hari jika pola konsumsi tetap.',
+                'text' => 'Siapkan sekitar '.$this->formatNumber($dailyFeedAvg * 7, 2).' kg pakan untuk 7 hari jika pola konsumsi '.$analysisDays.' hari terakhir tetap.',
             ];
         }
         if ($fcr !== null && $fcr > 2.4) {
@@ -201,7 +206,8 @@ class InsightController extends Controller
             $operasionalRows,
             $mortalityRows,
             [
-                'from30' => $from30,
+                'analysisStart' => $analysisStartDate,
+                'analysisDays' => $analysisDays,
                 'from14' => $from14,
                 'from7' => $from7,
                 'prev7Start' => $prev7Start,
@@ -237,6 +243,9 @@ class InsightController extends Controller
                     'kandang_count' => count($activeKandangIds),
                     'active_period_count' => $activePeriods->count(),
                     'live_birds' => (int) $liveBirds,
+                    'analysis_start' => $analysisStartDate,
+                    'analysis_end' => $today->toDateString(),
+                    'analysis_days' => $analysisDays,
                     'production_30_days_kg' => round($productionLast30, 2),
                     'feed_30_days_kg' => round($feedLast30, 2),
                     'profit_30_days_rp' => round($profitLast30, 0),
@@ -307,9 +316,10 @@ class InsightController extends Controller
             $kPakan = $pakanRows->where('id_kandang', $id);
             $kOperasional = $operasionalRows->where('id_kandang', $id);
             $kMortality = $mortalityRows->where('id_kandang', $id);
+            $analysisDays = max(1, (int) ($ranges['analysisDays'] ?? 30));
 
             $production30 = (float) $kProduksi
-                ->filter(fn (Produksi $row) => $row->tanggal->toDateString() >= $ranges['from30'])
+                ->filter(fn (Produksi $row) => $row->tanggal->toDateString() >= $ranges['analysisStart'])
                 ->sum(fn (Produksi $row) => $this->productionWeightTotal($row));
             $production14 = (float) $kProduksi
                 ->filter(fn (Produksi $row) => $row->tanggal->toDateString() >= $ranges['from14'])
@@ -321,7 +331,7 @@ class InsightController extends Controller
                 ->filter(fn (Produksi $row) => $row->tanggal->toDateString() >= $ranges['prev7Start'] && $row->tanggal->toDateString() <= $ranges['prev7End'])
                 ->sum(fn (Produksi $row) => $this->productionWeightTotal($row));
             $trendPct = $productionPrev7 > 0 ? (($production7 - $productionPrev7) / $productionPrev7) * 100 : null;
-            $dailyProductionAvg = $production14 > 0 ? $production14 / 14 : ($production30 > 0 ? $production30 / 30 : 0);
+            $dailyProductionAvg = $production14 > 0 ? $production14 / 14 : ($production30 > 0 ? $production30 / $analysisDays : 0);
 
             $feed30 = (float) $kPakan->sum('jumlah_kg');
             $feed7 = (float) $kPakan
@@ -329,7 +339,7 @@ class InsightController extends Controller
                 ->sum('jumlah_kg');
             $feedCost30 = (float) $kPakan->sum('total_harga');
             $revenue30 = (float) $kProduksi
-                ->filter(fn (Produksi $row) => $row->tanggal->toDateString() >= $ranges['from30'])
+                ->filter(fn (Produksi $row) => $row->tanggal->toDateString() >= $ranges['analysisStart'])
                 ->sum('total_harga');
             $operationalCost30 = (float) $kOperasional->sum(fn (Operasional $row) => (float) $row->rak + (float) $row->gaji + (float) $row->lain);
             $profit30 = $revenue30 - ($feedCost30 + $operationalCost30);
@@ -387,8 +397,8 @@ class InsightController extends Controller
                 ],
                 'prediction' => [
                     'production_7_days_kg' => round($dailyProductionAvg * 7, 2),
-                    'feed_7_days_kg' => round(($feed30 > 0 ? $feed30 / 30 : 0) * 7, 2),
-                    'profit_7_days_rp' => round(($profit30 !== 0.0 ? $profit30 / 30 : 0) * 7, 0),
+                    'feed_7_days_kg' => round(($feed30 > 0 ? $feed30 / $analysisDays : 0) * 7, 2),
+                    'profit_7_days_rp' => round(($profit30 !== 0.0 ? $profit30 / $analysisDays : 0) * 7, 0),
                 ],
                 'root_causes' => $rootCauses,
                 'suggestion' => $action,
