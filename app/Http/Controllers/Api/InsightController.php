@@ -423,19 +423,19 @@ class InsightController extends Controller
                         'note' => 'Data hari ini tidak dihitung karena produksi biasanya baru lengkap setelah pengambilan sore.',
                     ],
                     'fcr' => [
-                        'formula' => 'total_pakan_kg / total_produksi_kg',
+                        'formula' => 'Total pakan ÷ total produksi telur',
                         'feed_kg' => round($feed30, 2),
                         'production_kg' => round($production30, 2),
                         'result' => $fcr !== null ? round($fcr, 3) : null,
                     ],
                     'trend' => [
-                        'formula' => '((produksi_7_hari_terakhir - produksi_7_hari_sebelumnya) / produksi_7_hari_sebelumnya) x 100',
+                        'formula' => 'Selisih produksi dua minggu ÷ produksi minggu sebelumnya × 100',
                         'last_7_days_kg' => round($production7, 2),
                         'previous_7_days_kg' => round($productionPrev7, 2),
                         'result_pct' => $trendPct !== null ? round($trendPct, 2) : null,
                     ],
                     'score' => [
-                        'formula' => '100 - penalti FCR - penalti mortalitas - penalti margin - penalti data produksi - penalti tren turun',
+                        'formula' => '100 dikurangi penalti dari FCR, mortalitas, margin, data produksi, dan tren turun',
                         'start' => 100,
                         'penalties' => $scorePenalties,
                         'result' => round($score, 0),
