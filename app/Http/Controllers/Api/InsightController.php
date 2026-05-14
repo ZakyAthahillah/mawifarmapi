@@ -33,34 +33,45 @@ class InsightController extends Controller
         $prev7Start = $today->copy()->subDays(13)->toDateString();
         $prev7End = $today->copy()->subDays(7)->toDateString();
 
-        $produksiRows = Produksi::query()
-            ->whereIn('id_kandang', $kandangIds)
-            ->whereDate('tanggal', '>=', $from60)
-            ->orderBy('tanggal')
-            ->get();
-        $pakanRows = PakanTerpakai::query()
-            ->whereIn('id_kandang', $kandangIds)
-            ->whereDate('tanggal', '>=', $from30)
-            ->get();
-        $operasionalRows = Operasional::query()
-            ->whereIn('id_kandang', $kandangIds)
-            ->whereDate('tanggal', '>=', $from30)
-            ->get();
-        $mortalityRows = KandangMortalityLog::query()
-            ->whereIn('id_kandang', $kandangIds)
-            ->whereDate('tanggal', '>=', $prev7Start)
-            ->get();
-
         $activePeriods = KandangPeriode::query()
             ->whereIn('id_kandang', $kandangIds)
             ->where('status', 'aktif')
             ->get();
-        $kandangRows = Kandang::query()
-            ->whereIn('id_kandang', $kandangIds)
+        $activeKandangIds = $activePeriods->pluck('id_kandang')->map(fn ($id) => (int) $id)->unique()->values()->all();
+
+        if (empty($activeKandangIds)) {
+            return response()->json([
+                'status' => true,
+                'message' => 'Belum ada periode kandang aktif yang bisa dihitung.',
+                'data' => $this->emptyInsight('Belum ada periode aktif', 'Aktifkan periode kandang yang masih berisi ayam agar prediksi otomatis hanya menghitung kandang berjalan.'),
+            ]);
+        }
+
+        $produksiRows = Produksi::query()
+            ->whereIn('id_kandang', $activeKandangIds)
+            ->whereDate('tanggal', '>=', $from60)
+            ->orderBy('tanggal')
             ->get();
-        $liveBirds = $activePeriods->isNotEmpty()
-            ? $activePeriods->sum(fn (KandangPeriode $row) => max(0, (int) $row->populasi_awal - (int) $row->total_kematian))
-            : $kandangRows->sum(fn (Kandang $row) => max(0, (int) $row->populasi - (int) $row->total_kematian));
+        $pakanRows = PakanTerpakai::query()
+            ->whereIn('id_kandang', $activeKandangIds)
+            ->whereDate('tanggal', '>=', $from30)
+            ->get();
+        $operasionalRows = Operasional::query()
+            ->whereIn('id_kandang', $activeKandangIds)
+            ->whereDate('tanggal', '>=', $from30)
+            ->get();
+        $mortalityRows = KandangMortalityLog::query()
+            ->whereIn('id_kandang', $activeKandangIds)
+            ->whereDate('tanggal', '>=', $prev7Start)
+            ->get();
+        $produksiRows = $produksiRows->filter(fn (Produksi $row) => $this->rowInActivePeriod($row, $activePeriods))->values();
+        $pakanRows = $pakanRows->filter(fn (PakanTerpakai $row) => $this->rowInActivePeriod($row, $activePeriods))->values();
+        $operasionalRows = $operasionalRows->filter(fn (Operasional $row) => $this->rowInActivePeriod($row, $activePeriods))->values();
+        $mortalityRows = $mortalityRows->filter(fn (KandangMortalityLog $row) => $this->rowInActivePeriod($row, $activePeriods))->values();
+        $kandangRows = Kandang::query()
+            ->whereIn('id_kandang', $activeKandangIds)
+            ->get();
+        $liveBirds = $activePeriods->sum(fn (KandangPeriode $row) => max(0, (int) $row->populasi_awal - (int) $row->total_kematian));
 
         $productionLast30 = (float) $produksiRows
             ->filter(fn (Produksi $row) => $row->tanggal->toDateString() >= $from30)
@@ -198,12 +209,13 @@ class InsightController extends Controller
             ],
         );
         $riskKandang = collect($kandangInsights)
+            ->filter(fn (array $row) => count($row['root_causes']) > 0 || ($row['health']['score'] ?? 100) < 85)
             ->sortByDesc('risk_score')
             ->values()
             ->take(5)
             ->all();
         $championKandang = collect($kandangInsights)
-            ->filter(fn (array $row) => ($row['metrics']['production_30_days_kg'] ?? 0) > 0)
+            ->filter(fn (array $row) => ($row['metrics']['production_30_days_kg'] ?? 0) > 0 && count($row['root_causes']) === 0)
             ->sortByDesc(fn (array $row) => $row['health']['score'])
             ->values()
             ->take(3)
@@ -222,7 +234,7 @@ class InsightController extends Controller
             'data' => [
                 'generated_at' => now()->toIso8601String(),
                 'summary' => [
-                    'kandang_count' => count($kandangIds),
+                    'kandang_count' => count($activeKandangIds),
                     'active_period_count' => $activePeriods->count(),
                     'live_birds' => (int) $liveBirds,
                     'production_30_days_kg' => round($productionLast30, 2),
@@ -260,7 +272,7 @@ class InsightController extends Controller
         ]);
     }
 
-    private function emptyInsight(): array
+    private function emptyInsight(string $title = 'Belum ada kandang', string $text = 'Tambahkan kandang dan mulai input data harian agar prediksi otomatis bisa dibuat.'): array
     {
         return [
             'summary' => ['kandang_count' => 0, 'active_period_count' => 0, 'live_birds' => 0],
@@ -269,13 +281,13 @@ class InsightController extends Controller
             'anomalies' => [],
             'recommendations' => [[
                 'tone' => 'green',
-                'title' => 'Belum ada kandang',
-                'text' => 'Tambahkan kandang dan mulai input data harian agar prediksi otomatis bisa dibuat.',
+                'title' => $title,
+                'text' => $text,
             ]],
             'early_warning' => [
                 'level' => 'aman',
-                'label' => 'Belum ada data',
-                'text' => 'Tambahkan data kandang untuk mulai membuat peringatan otomatis.',
+                'label' => $title,
+                'text' => $text,
             ],
             'kandang_rankings' => ['risk' => [], 'champion' => []],
             'root_causes' => [],
@@ -341,7 +353,16 @@ class InsightController extends Controller
             ));
 
             $rootCauses = $this->rootCausesForKandang($trendPct, $fcr, $mortalityPct7, $profitMargin, $feed7, $production7, $productionPrev7);
-            $action = $this->actionForKandang($rootCauses, $score, $dailyProductionAvg, $feed30);
+            $action = $this->actionForKandang([
+                'root_causes' => $rootCauses,
+                'score' => $score,
+                'daily_production_avg' => $dailyProductionAvg,
+                'feed_30' => $feed30,
+                'production_7' => $production7,
+                'production_trend_pct' => $trendPct,
+                'fcr' => $fcr,
+                'mortality_pct_7' => $mortalityPct7,
+            ]);
 
             return [
                 'id_kandang' => $id,
@@ -428,13 +449,38 @@ class InsightController extends Controller
         return array_slice($causes, 0, 3);
     }
 
-    private function actionForKandang(array $rootCauses, float $score, float $dailyProductionAvg, float $feed30): array
+    private function actionForKandang(array $context): array
     {
+        $rootCauses = $context['root_causes'];
+        $score = (float) $context['score'];
+        $dailyProductionAvg = (float) $context['daily_production_avg'];
+        $feed30 = (float) $context['feed_30'];
+        $production7 = (float) $context['production_7'];
+        $trendPct = $context['production_trend_pct'];
+        $fcr = $context['fcr'];
+        $mortalityPct7 = $context['mortality_pct_7'];
+
         if (collect($rootCauses)->contains(fn (array $cause) => $cause['tone'] === 'rose')) {
             return [
                 'tone' => 'rose',
                 'title' => 'Prioritaskan pengecekan kandang',
-                'text' => 'Cek kematian, kondisi air, ventilasi, kepadatan, dan perubahan perilaku ayam hari ini.',
+                'text' => 'Mortalitas melewati batas pantau. Cek air minum, ventilasi, kepadatan, dan catatan kematian sebelum evaluasi pakan.',
+            ];
+        }
+
+        if ($trendPct !== null && $trendPct <= -12) {
+            return [
+                'tone' => 'amber',
+                'title' => 'Telusuri penurunan produksi',
+                'text' => 'Produksi turun '.$this->formatPercent(abs($trendPct)).'. Bandingkan pakan 7 hari terakhir, kondisi kandang, dan perubahan input produksi harian.',
+            ];
+        }
+
+        if ($fcr !== null && $fcr > 2.4) {
+            return [
+                'tone' => 'amber',
+                'title' => 'Fokus efisiensi pakan',
+                'text' => 'FCR '.$this->formatNumber($fcr, 3).' melewati batas pantau. Cek kualitas pakan, sisa pakan, dan akurasi berat telur.',
             ];
         }
 
@@ -449,8 +495,11 @@ class InsightController extends Controller
         if ($dailyProductionAvg > 0 && $feed30 > 0) {
             return [
                 'tone' => 'green',
-                'title' => 'Pertahankan pola terbaik',
-                'text' => 'Gunakan kandang ini sebagai pembanding untuk kandang lain dengan FCR atau produksi lebih lemah.',
+                'title' => 'Pola kandang stabil',
+                'text' => 'Pertahankan ritme pakan dan pencatatan. Produksi 7 hari '.$this->formatNumber($production7, 2).' kg'
+                    .($fcr !== null ? ' dengan FCR '.$this->formatNumber($fcr, 3) : '')
+                    .($mortalityPct7 !== null ? ', mortalitas '.$this->formatPercent($mortalityPct7) : '')
+                    .'.',
             ];
         }
 
@@ -487,6 +536,25 @@ class InsightController extends Controller
             fn (float $carry, string $column) => $carry + (float) ($row->{$column} ?? 0),
             0.0
         );
+    }
+
+    private function rowInActivePeriod($row, $activePeriods): bool
+    {
+        $period = $activePeriods->firstWhere('id_kandang', (int) $row->id_kandang);
+
+        if (! $period || ! $row->tanggal) {
+            return false;
+        }
+
+        if (! empty($row->id_periode) && (int) $row->id_periode !== (int) $period->id_periode) {
+            return false;
+        }
+
+        $date = $row->tanggal->toDateString();
+        $start = $period->tanggal_mulai?->toDateString();
+        $end = $period->tanggal_selesai?->toDateString();
+
+        return (! $start || $date >= $start) && (! $end || $date <= $end);
     }
 
     private function formatNumber(float $value, int $digits = 0): string
