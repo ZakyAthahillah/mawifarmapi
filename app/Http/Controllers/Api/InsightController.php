@@ -25,18 +25,19 @@ class InsightController extends Controller
             ]);
         }
 
-        $today = now()->startOfDay();
-        $reliableStart = $today->copy()->setDate(2026, 5, 1)->startOfDay();
-        $from60 = $today->copy()->subDays(59)->toDateString();
-        $analysisStart = $today->copy()->subDays(29)->greaterThan($reliableStart)
-            ? $today->copy()->subDays(29)
+        $analysisEnd = now()->subDay()->startOfDay();
+        $reliableStart = $analysisEnd->copy()->setDate(2026, 5, 1)->startOfDay();
+        $from60 = $analysisEnd->copy()->subDays(59)->toDateString();
+        $analysisStart = $analysisEnd->copy()->subDays(29)->greaterThan($reliableStart)
+            ? $analysisEnd->copy()->subDays(29)
             : $reliableStart;
         $analysisStartDate = $analysisStart->toDateString();
-        $analysisDays = max(1, (int) $analysisStart->diffInDays($today) + 1);
-        $from14 = $today->copy()->subDays(13)->toDateString();
-        $from7 = $today->copy()->subDays(6)->toDateString();
-        $prev7Start = $today->copy()->subDays(13)->toDateString();
-        $prev7End = $today->copy()->subDays(7)->toDateString();
+        $analysisEndDate = $analysisEnd->toDateString();
+        $analysisDays = max(1, (int) $analysisStart->diffInDays($analysisEnd) + 1);
+        $from14 = $analysisEnd->copy()->subDays(13)->toDateString();
+        $from7 = $analysisEnd->copy()->subDays(6)->toDateString();
+        $prev7Start = $analysisEnd->copy()->subDays(13)->toDateString();
+        $prev7End = $analysisEnd->copy()->subDays(7)->toDateString();
 
         $activePeriods = KandangPeriode::query()
             ->whereIn('id_kandang', $kandangIds)
@@ -55,19 +56,23 @@ class InsightController extends Controller
         $produksiRows = Produksi::query()
             ->whereIn('id_kandang', $activeKandangIds)
             ->whereDate('tanggal', '>=', $from60)
+            ->whereDate('tanggal', '<=', $analysisEndDate)
             ->orderBy('tanggal')
             ->get();
         $pakanRows = PakanTerpakai::query()
             ->whereIn('id_kandang', $activeKandangIds)
             ->whereDate('tanggal', '>=', $analysisStartDate)
+            ->whereDate('tanggal', '<=', $analysisEndDate)
             ->get();
         $operasionalRows = Operasional::query()
             ->whereIn('id_kandang', $activeKandangIds)
             ->whereDate('tanggal', '>=', $analysisStartDate)
+            ->whereDate('tanggal', '<=', $analysisEndDate)
             ->get();
         $mortalityRows = KandangMortalityLog::query()
             ->whereIn('id_kandang', $activeKandangIds)
             ->whereDate('tanggal', '>=', $prev7Start)
+            ->whereDate('tanggal', '<=', $analysisEndDate)
             ->get();
         $produksiRows = $produksiRows->filter(fn (Produksi $row) => $this->rowInActivePeriod($row, $activePeriods))->values();
         $pakanRows = $pakanRows->filter(fn (PakanTerpakai $row) => $this->rowInActivePeriod($row, $activePeriods))->values();
@@ -207,6 +212,7 @@ class InsightController extends Controller
             $mortalityRows,
             [
                 'analysisStart' => $analysisStartDate,
+                'analysisEnd' => $analysisEndDate,
                 'analysisDays' => $analysisDays,
                 'from14' => $from14,
                 'from7' => $from7,
@@ -244,7 +250,7 @@ class InsightController extends Controller
                     'active_period_count' => $activePeriods->count(),
                     'live_birds' => (int) $liveBirds,
                     'analysis_start' => $analysisStartDate,
-                    'analysis_end' => $today->toDateString(),
+                    'analysis_end' => $analysisEndDate,
                     'analysis_days' => $analysisDays,
                     'production_30_days_kg' => round($productionLast30, 2),
                     'feed_30_days_kg' => round($feedLast30, 2),
