@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Kandang;
+use App\Models\KandangPeriode;
 use App\Models\Operasional;
 use App\Models\PakanTerpakai;
 use App\Models\Produksi;
@@ -14,6 +15,13 @@ class FinanceController extends Controller
 {
     public function summary(Request $request)
     {
+        if (! in_array((string) auth()->user()?->role, ['developer', 'owner'], true)) {
+            return response()->json([
+                'status' => false,
+                'message' => 'Menu Finansial hanya untuk Developer dan Owner.',
+            ], 403);
+        }
+
         $request->validate([
             'tanggal_mulai' => ['nullable', 'date'],
             'tanggal_selesai' => ['nullable', 'date'],
@@ -47,6 +55,12 @@ class FinanceController extends Controller
         $ids = $kandangIds->values()->all();
         $startDate = $start->toDateString();
         $endDate = $end->toDateString();
+        $activeKandangIds = KandangPeriode::query()
+            ->whereIn('id_kandang', $ids)
+            ->where('status', 'aktif')
+            ->pluck('id_kandang')
+            ->map(fn ($id) => (int) $id)
+            ->all();
 
         $produksiRows = Produksi::query()
             ->with('kandang:id_kandang,nama_kandang')
@@ -113,8 +127,9 @@ class FinanceController extends Controller
             ->whereIn('id_kandang', $ids)
             ->orderBy('nama_kandang')
             ->get()
-            ->map(function (Kandang $kandang) use ($produksiRows, $pakanRows, $operasionalRows) {
+            ->map(function (Kandang $kandang) use ($produksiRows, $pakanRows, $operasionalRows, $activeKandangIds) {
                 $id = (int) $kandang->id_kandang;
+                $isActivePeriod = in_array($id, $activeKandangIds, true);
                 $kProduksi = $produksiRows->where('id_kandang', $id);
                 $kPakan = $pakanRows->where('id_kandang', $id);
                 $kOperasional = $operasionalRows->where('id_kandang', $id);
@@ -149,7 +164,8 @@ class FinanceController extends Controller
                     'risk_level' => $this->riskLevel($riskScore),
                     'risk_score' => round($riskScore, 0),
                     'root_causes' => $this->kandangRootCauses($margin, $fcr, $profit, $cashIn, $productionKg, $feedCost, $cashOut),
-                    'status' => $this->kandangStatus($profit, $cashIn, $productionKg),
+                    'is_active_period' => $isActivePeriod,
+                    'status' => $isActivePeriod ? $this->kandangStatus($profit, $cashIn, $productionKg) : 'Periode selesai',
                 ];
             })
             ->values();
