@@ -594,6 +594,8 @@ class FinanceController extends Controller
     private function actionPlan(array $recommendations, array $kandangRows, array $benchmark): array
     {
         $riskRows = collect($kandangRows)
+            ->filter(fn (array $row) => ($row['is_active_period'] ?? false) === true)
+            ->filter(fn (array $row) => (float) ($row['production_kg'] ?? 0) > 0 || (float) ($row['cash_in'] ?? 0) > 0 || (float) ($row['cash_out'] ?? 0) > 0)
             ->sortByDesc('risk_score')
             ->take(3)
             ->values();
@@ -602,7 +604,7 @@ class FinanceController extends Controller
             'priority' => $index + 1,
             'title' => 'Evaluasi '.$row['nama_kandang'],
             'text' => ($row['root_causes'][0]['text'] ?? 'Bandingkan cash in, cash out, FCR, dan biaya per kg telur.')
-                .' Net cash: '.number_format((float) $row['net_cash'], 0, ',', '.').'.',
+                .' Laba: '.number_format((float) $row['net_cash'], 0, ',', '.').'.',
         ])->all();
 
         if (empty($actions) && ! empty($recommendations)) {
